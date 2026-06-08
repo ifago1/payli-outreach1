@@ -1,0 +1,132 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Een lead = een vestiging (vestigingsnummer) bij de KVK.
+// We sla de vestiging op omdat fysieke retail/horeca per locatie relevant is.
+model Lead {
+  id                String   @id @default(cuid())
+  kvkNumber         String
+  vestigingsnummer  String   @unique
+  isHoofdvestiging  Boolean  @default(false)
+
+  handelsnaam       String
+  rechtsvorm        String?
+
+  street            String?
+  houseNumber       String?
+  postalCode        String?
+  city              String?
+  country           String?  @default("Nederland")
+  website           String?
+  phone             String?
+  email             String?
+
+  // Primary SBI activity for this vestiging
+  sbiCode           String?
+  sbiDescription    String?
+  // Comma-separated list of all SBI codes for this vestiging
+  sbiCodesAll       String?
+  // Onze afgeleide categorie: "retail" | "horeca" | "hotel" | "other"
+  category          String   @default("other")
+
+  // Datum van eerste inschrijving van deze vestiging in HR
+  registeredAt      DateTime?
+  // Bedrijfsleeftijd in dagen, gecached bij sync
+  ageDays           Int?
+  employees         Int?
+
+  // Outreach status — SQLite kent geen Prisma enums, dus opgeslagen als string.
+  // Toegestaan: NEW | ENRICHING | TO_CONTACT | CONTACTED | IN_CONVERSATION | PROPOSAL_SENT | WON | LOST | DO_NOT_CONTACT
+  status            String   @default("NEW")
+  // LOW | MEDIUM | HIGH
+  priority          String   @default("MEDIUM")
+  assignedTo        String?
+
+  notes             Note[]
+  emails            EmailLog[]
+  callLogs          CallLog[]
+
+  source            String   @default("kvk-zoeken-api")
+  rawProfileJson    String?
+  lastSyncedAt      DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([registeredAt])
+  @@index([postalCode])
+  @@index([city])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  body      String
+  author    String?
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+}
+
+model CallLog {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  outcome   String   // bv. "no_answer" | "callback" | "interested" | "not_interested"
+  summary   String?
+  durationSec Int?
+  caller    String?
+  calledAt  DateTime @default(now())
+
+  @@index([leadId])
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  // Doelcategorie: retail | horeca | hotel | any
+  audience  String   @default("any")
+  subject   String
+  body      String
+  // Merge fields beschikbaar: {{handelsnaam}}, {{city}}, {{category}}, {{firstName}}
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  toAddress   String
+  fromAddress String
+  subject     String
+  body        String
+  templateId  String?
+  status      String   // "sent" | "failed" | "queued"
+  errorMsg    String?
+  sentAt      DateTime @default(now())
+
+  @@index([leadId])
+}
+
+model SyncRun {
+  id              String   @id @default(cuid())
+  startedAt       DateTime @default(now())
+  finishedAt      DateTime?
+  trigger         String   // "manual" | "cron" | "import"
+  searchParams    String?  // JSON van gebruikte zoekparams
+  totalSearched   Int      @default(0)
+  totalProfilesFetched Int @default(0)
+  totalLeadsCreated    Int @default(0)
+  totalLeadsUpdated    Int @default(0)
+  errors          String?  // JSON array van errors
+  status          String   @default("running") // "running" | "completed" | "failed"
+}
