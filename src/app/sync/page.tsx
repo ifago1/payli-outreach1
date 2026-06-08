@@ -78,7 +78,20 @@ export default async function SyncPage() {
                       <td className="py-2 pr-4">
                         {r.totalLeadsCreated} / {r.totalLeadsUpdated}
                       </td>
-                      <td className="py-2 pr-4 text-rose-600">{errs.length || 0}</td>
+                      <td className="py-2 pr-4 text-rose-600">
+                        {errs.length === 0 ? (
+                          0
+                        ) : (
+                          <details className="cursor-pointer">
+                            <summary className="select-none">{errs.length}</summary>
+                            <ul className="mt-1 ml-2 list-disc text-xs text-rose-700 font-mono max-w-xl break-all">
+                              {errs.map((e, i) => (
+                                <li key={i}>{e}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
