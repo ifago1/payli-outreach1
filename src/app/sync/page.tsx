@@ -79,15 +79,20 @@ export default async function SyncPage() {
                       <td className="py-2 pr-4 text-slate-600">{r.trigger}</td>
                       <td className="py-2 pr-4">
                         {r.totalProfilesFetched}
-                        {r.profilesFromCache > 0 && (
-                          <span className="text-slate-400"> ({r.profilesFromCache})</span>
+                        {(r.profilesFromCache > 0 || r.profilesSkippedRejected > 0) && (
+                          <span className="text-slate-400">
+                            {" "}
+                            ({r.profilesFromCache > 0 && `${r.profilesFromCache} cache`}
+                            {r.profilesFromCache > 0 && r.profilesSkippedRejected > 0 && ", "}
+                            {r.profilesSkippedRejected > 0 && `${r.profilesSkippedRejected} skip`})
+                          </span>
                         )}
                       </td>
                       <td className="py-2 pr-4 font-medium text-slate-700">
                         {formatCents(cost.cents)}
-                        {cost.savedCents > 0 && (
+                        {(cost.savedCents > 0 || r.profilesSkippedRejected > 0) && (
                           <span className="block text-xs text-emerald-600 font-normal">
-                            bespaard {formatCents(cost.savedCents)}
+                            bespaard {formatCents(cost.savedCents + r.profilesSkippedRejected * 2)}
                           </span>
                         )}
                       </td>

@@ -17,6 +17,7 @@ export function SyncForm() {
     totalSearched: number;
     totalProfilesFetched: number;
     profilesFromCache: number;
+    profilesSkippedRejected: number;
     totalLeadsCreated: number;
     totalLeadsUpdated: number;
     errors: string[];
@@ -162,11 +163,17 @@ export function SyncForm() {
                 {result.totalLeadsCreated} nieuwe lead(s) · {result.totalLeadsUpdated} bijgewerkt ·{" "}
                 {result.totalProfilesFetched} profielen opgehaald
                 {result.profilesFromCache > 0 && <> · {result.profilesFromCache} uit cache</>}
+                {result.profilesSkippedRejected > 0 && (
+                  <> · {result.profilesSkippedRejected} eerder afgewezen, overgeslagen</>
+                )}
               </p>
               <p className="mt-1 text-emerald-900">
                 KVK-kosten deze run: <strong>{formatCents(cost.cents)}</strong>
-                {cost.savedCents > 0 && (
-                  <span className="text-emerald-700"> · bespaard door cache: {formatCents(cost.savedCents)}</span>
+                {(cost.savedCents > 0 || result.profilesSkippedRejected > 0) && (
+                  <span className="text-emerald-700">
+                    {" · bespaard: "}
+                    {formatCents(cost.savedCents + result.profilesSkippedRejected * 2)}
+                  </span>
                 )}
               </p>
               {result.errors.length > 0 && (

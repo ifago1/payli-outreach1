@@ -29,6 +29,7 @@ export interface SyncSummary {
   totalSearched: number;
   totalProfilesFetched: number;
   profilesFromCache: number;
+  profilesSkippedRejected: number;
   totalLeadsCreated: number;
   totalLeadsUpdated: number;
   errors: string[];
@@ -40,6 +41,11 @@ const DEFAULT_MAX = Number(process.env.SYNC_MAX_PROFILES_PER_RUN ?? 200);
 // hergebruiken we uit de database in plaats van opnieuw bij KVK aan te kloppen.
 // Bespaart €0,02 per profiel — bij re-syncs van dezelfde regio gaat dat hard.
 const PROFILE_CACHE_DAYS = Number(process.env.SYNC_PROFILE_CACHE_DAYS ?? 7);
+// Vestigingen die we eerder hebben afgewezen (verkeerde SBI of te oud) cachen
+// we N dagen lang — anders betalen we elke run opnieuw €0,02 per profiel om
+// hetzelfde oordeel te vellen. Bedrijven veranderen zelden van SBI; 30 dagen
+// is een veilige refresh-periode.
+const REJECT_CACHE_DAYS = Number(process.env.SYNC_REJECT_CACHE_DAYS ?? 30);
 
 /**
  * Runt een sync: zoekt vestigingen, haalt vestigingsprofielen op, filtert
@@ -65,10 +71,12 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
   let totalSearched = 0;
   let totalProfilesFetched = 0;
   let profilesFromCache = 0;
+  let profilesSkippedRejected = 0;
   let totalLeadsCreated = 0;
   let totalLeadsUpdated = 0;
 
   const cacheCutoff = new Date(Date.now() - PROFILE_CACHE_DAYS * 24 * 60 * 60 * 1000);
+  const rejectCutoff = new Date(Date.now() - REJECT_CACHE_DAYS * 24 * 60 * 60 * 1000);
 
   try {
     for (const baseParams of options.searches) {
@@ -93,6 +101,21 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
         for (const item of searchResp.resultaten) {
           if (totalProfilesFetched >= maxProfiles) break;
           if (!item.vestigingsnummer) continue; // alleen vestigingen — geen losse rechtspersonen
+
+          // Afwijzings-cache: hebben we deze vestiging eerder geëvalueerd én
+          // niet relevant bevonden? Zo ja, sla 'm over zonder opnieuw €0,02
+          // uit te geven. In testmodus negeren we deze cache ook — anders kun
+          // je 'm nooit handmatig herevalueren.
+          if (!ignoreFilters) {
+            const rejected = await prisma.rejectedVestiging.findUnique({
+              where: { vestigingsnummer: item.vestigingsnummer },
+              select: { checkedAt: true },
+            });
+            if (rejected && rejected.checkedAt > rejectCutoff) {
+              profilesSkippedRejected += 1;
+              continue;
+            }
+          }
 
           // Cache-check: hebben we dit profiel recent al opgehaald? Zo ja,
           // hergebruiken we de opgeslagen JSON in plaats van een nieuwe €0,02-call.
@@ -132,7 +155,9 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
 
           const sbiCodes = (profile.sbiActiviteiten ?? []).map((s) => s.sbiCode);
           const targetMatch = findTargetSbi(sbiCodes);
-          if (!targetMatch && !ignoreFilters) continue; // SBI valt buiten onze doelgroep
+          const primarySbiForReject = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit)?.sbiCode
+            ?? sbiCodes[0]
+            ?? null;
 
           const startDate = profile.materieleRegistratie?.datumAanvang
             ? new Date(profile.materieleRegistratie.datumAanvang)
@@ -144,7 +169,48 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             ? Math.floor((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24))
             : null;
 
-          if (!ignoreFilters && windowDays !== null && ageDays !== null && ageDays > windowDays) continue;
+          if (!targetMatch && !ignoreFilters) {
+            // SBI valt buiten onze doelgroep — onthouden zodat we 'm bij een
+            // volgende sync niet opnieuw oppikken (en betalen).
+            await prisma.rejectedVestiging.upsert({
+              where: { vestigingsnummer: profile.vestigingsnummer },
+              create: {
+                vestigingsnummer: profile.vestigingsnummer,
+                kvkNumber: profile.kvkNummer,
+                reason: "sbi-mismatch",
+                sbiCode: primarySbiForReject,
+                registeredAt: startDate,
+              },
+              update: {
+                reason: "sbi-mismatch",
+                sbiCode: primarySbiForReject,
+                registeredAt: startDate,
+                checkedAt: new Date(),
+              },
+            });
+            continue;
+          }
+
+          if (!ignoreFilters && windowDays !== null && ageDays !== null && ageDays > windowDays) {
+            // Wel de juiste SBI, maar inschrijving valt buiten ons "nieuw"-venster.
+            await prisma.rejectedVestiging.upsert({
+              where: { vestigingsnummer: profile.vestigingsnummer },
+              create: {
+                vestigingsnummer: profile.vestigingsnummer,
+                kvkNumber: profile.kvkNummer,
+                reason: "too-old",
+                sbiCode: primarySbiForReject,
+                registeredAt: startDate,
+              },
+              update: {
+                reason: "too-old",
+                sbiCode: primarySbiForReject,
+                registeredAt: startDate,
+                checkedAt: new Date(),
+              },
+            });
+            continue;
+          }
 
           const bezoek = (profile.adressen ?? []).find((a) => a.type === "bezoekadres") ?? profile.adressen?.[0];
           const primarySbi = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit) ?? profile.sbiActiviteiten?.[0];
@@ -194,6 +260,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
         totalSearched,
         totalProfilesFetched,
         profilesFromCache,
+        profilesSkippedRejected,
         totalLeadsCreated,
         totalLeadsUpdated,
         errors: errors.length ? JSON.stringify(errors) : null,
@@ -209,6 +276,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
         totalSearched,
         totalProfilesFetched,
         profilesFromCache,
+        profilesSkippedRejected,
         totalLeadsCreated,
         totalLeadsUpdated,
         errors: JSON.stringify(errors),
@@ -222,6 +290,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
     totalSearched,
     totalProfilesFetched,
     profilesFromCache,
+    profilesSkippedRejected,
     totalLeadsCreated,
     totalLeadsUpdated,
     errors,
