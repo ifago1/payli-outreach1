@@ -1,0 +1,18 @@
+# Caddyfile voor payli-outreach achter Cloudflare.
+# Plaats op de server: sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+:80 {
+    # Geef Next.js het juiste protocol mee — Cloudflare termineert TLS,
+    # zonder deze header denkt Next.js dat alle verkeer HTTP is.
+    reverse_proxy 127.0.0.1:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+
+    # Compressie aanzetten (Cloudflare doet dit ook, maar dubbel kan geen kwaad)
+    encode gzip
+
+    # Toegankelijk via Cloudflare — origin-toegang blokkeren door alleen
+    # Cloudflare-IPs in de AWS security group toe te laten (zie DEPLOY.md).
+}
