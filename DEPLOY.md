@@ -73,6 +73,33 @@ sudo systemctl stop payli-outreach
 sudo systemctl start payli-outreach
 ```
 
+## Wachtwoord-beveiliging aanzetten
+
+De hele app kan worden afgeschermd met HTTP Basic Auth (browser-prompt) door
+twee env-variabelen te zetten in `.env`:
+
+```bash
+BASIC_AUTH_USER="payli"
+BASIC_AUTH_PASSWORD="kies-een-sterk-wachtwoord"
+```
+
+Daarna:
+
+```bash
+sudo systemctl restart payli-outreach
+```
+
+Je krijgt nu bij elk verzoek een loginprompt. De cron-route
+(`/api/sync/cron`) blijft uitgezonderd — die heeft een eigen
+`SYNC_CRON_SECRET`-header. Laat de variabelen leeg om auth uit te zetten
+(lokaal werken).
+
+> Veiligheidsnotie: Basic Auth stuurt het wachtwoord per request mee. Dat is
+> alleen veilig over HTTPS — wat in jouw setup automatisch het geval is,
+> omdat Cloudflare TLS termineert. Toegang tot de origin via `http://<ip>`
+> direct is niet versleuteld; zet daarvoor de AWS security group strikt op
+> alleen [Cloudflare-IPs](https://www.cloudflare.com/ips/).
+
 ## Tips
 
 - **Swap** voor kleine instances (<2 GB RAM). Anders breekt `next build` met
