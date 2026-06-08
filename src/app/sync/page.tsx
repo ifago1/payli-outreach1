@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDateTime } from "@/lib/utils";
 import { SyncForm } from "@/components/SyncForm";
+import { estimateSyncCost, formatCents } from "@/lib/kvk-pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +50,8 @@ export default async function SyncPage() {
                   <th className="py-2 pr-4 font-medium">Gestart</th>
                   <th className="py-2 pr-4 font-medium">Status</th>
                   <th className="py-2 pr-4 font-medium">Trigger</th>
-                  <th className="py-2 pr-4 font-medium">Profielen</th>
+                  <th className="py-2 pr-4 font-medium">Profielen (cache)</th>
+                  <th className="py-2 pr-4 font-medium">KVK-kosten</th>
                   <th className="py-2 pr-4 font-medium">Leads nieuw / update</th>
                   <th className="py-2 pr-4 font-medium">Foutmeldingen</th>
                 </tr>
@@ -57,6 +59,7 @@ export default async function SyncPage() {
               <tbody className="divide-y divide-slate-100">
                 {runs.map((r) => {
                   const errs = r.errors ? (JSON.parse(r.errors) as string[]) : [];
+                  const cost = estimateSyncCost(r.totalProfilesFetched, r.profilesFromCache);
                   return (
                     <tr key={r.id}>
                       <td className="py-2 pr-4">{formatDateTime(r.startedAt)}</td>
@@ -74,7 +77,20 @@ export default async function SyncPage() {
                         </span>
                       </td>
                       <td className="py-2 pr-4 text-slate-600">{r.trigger}</td>
-                      <td className="py-2 pr-4">{r.totalProfilesFetched}</td>
+                      <td className="py-2 pr-4">
+                        {r.totalProfilesFetched}
+                        {r.profilesFromCache > 0 && (
+                          <span className="text-slate-400"> ({r.profilesFromCache})</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-4 font-medium text-slate-700">
+                        {formatCents(cost.cents)}
+                        {cost.savedCents > 0 && (
+                          <span className="block text-xs text-emerald-600 font-normal">
+                            bespaard {formatCents(cost.savedCents)}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2 pr-4">
                         {r.totalLeadsCreated} / {r.totalLeadsUpdated}
                       </td>
@@ -109,6 +125,12 @@ export default async function SyncPage() {
           <code className="bg-slate-100 px-1 rounded">vestigingsprofiel</code> op om de SBI-activiteiten en
           inschrijfdatum te controleren. Vestigingen die binnen onze retail/horeca-whitelist vallen én
           jonger zijn dan de gekozen window worden opgeslagen als lead.
+        </p>
+        <p className="text-slate-600">
+          <strong>Kosten per call:</strong> Zoeken-API is gratis, elk vestigingsprofiel kost <strong>€ 0,02</strong>{" "}
+          (plus € 6,40 vast per maand). Profielen die we de afgelopen 7 dagen al hebben opgehaald (zie{" "}
+          <code className="bg-slate-100 px-1 rounded">SYNC_PROFILE_CACHE_DAYS</code> in <code>.env</code>) halen
+          we uit onze lokale cache — die tellen niet mee voor de kosten.
         </p>
         <p className="text-slate-600">
           Voor échte dagelijkse nieuwe inschrijvingen op grote schaal heb je het{" "}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { estimateSyncCost, formatCents } from "@/lib/kvk-pricing";
 
 export function SyncForm() {
   const router = useRouter();
@@ -15,6 +16,7 @@ export function SyncForm() {
   const [result, setResult] = useState<null | {
     totalSearched: number;
     totalProfilesFetched: number;
+    profilesFromCache: number;
     totalLeadsCreated: number;
     totalLeadsUpdated: number;
     errors: string[];
@@ -150,16 +152,31 @@ export function SyncForm() {
       {error && (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>
       )}
-      {result && (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          <p className="font-medium">Sync klaar</p>
-          <p>
-            {result.totalLeadsCreated} nieuwe lead(s) · {result.totalLeadsUpdated} bijgewerkt ·{" "}
-            {result.totalProfilesFetched} profielen opgehaald
-          </p>
-          {result.errors.length > 0 && <p className="text-amber-700 mt-1">{result.errors.length} waarschuwing(en) — zie de tabel hieronder.</p>}
-        </div>
-      )}
+      {result &&
+        (() => {
+          const cost = estimateSyncCost(result.totalProfilesFetched, result.profilesFromCache);
+          return (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <p className="font-medium">Sync klaar</p>
+              <p>
+                {result.totalLeadsCreated} nieuwe lead(s) · {result.totalLeadsUpdated} bijgewerkt ·{" "}
+                {result.totalProfilesFetched} profielen opgehaald
+                {result.profilesFromCache > 0 && <> · {result.profilesFromCache} uit cache</>}
+              </p>
+              <p className="mt-1 text-emerald-900">
+                KVK-kosten deze run: <strong>{formatCents(cost.cents)}</strong>
+                {cost.savedCents > 0 && (
+                  <span className="text-emerald-700"> · bespaard door cache: {formatCents(cost.savedCents)}</span>
+                )}
+              </p>
+              {result.errors.length > 0 && (
+                <p className="text-amber-700 mt-1">
+                  {result.errors.length} waarschuwing(en) — zie de tabel hieronder.
+                </p>
+              )}
+            </div>
+          );
+        })()}
     </form>
   );
 }

@@ -28,6 +28,7 @@ export interface SyncSummary {
   syncRunId: string;
   totalSearched: number;
   totalProfilesFetched: number;
+  profilesFromCache: number;
   totalLeadsCreated: number;
   totalLeadsUpdated: number;
   errors: string[];
@@ -35,6 +36,10 @@ export interface SyncSummary {
 
 const DEFAULT_WINDOW = Number(process.env.SYNC_NEW_BUSINESS_WINDOW_DAYS ?? 60);
 const DEFAULT_MAX = Number(process.env.SYNC_MAX_PROFILES_PER_RUN ?? 200);
+// Vestigingsprofielen die we de afgelopen N dagen al hebben opgehaald
+// hergebruiken we uit de database in plaats van opnieuw bij KVK aan te kloppen.
+// Bespaart €0,02 per profiel — bij re-syncs van dezelfde regio gaat dat hard.
+const PROFILE_CACHE_DAYS = Number(process.env.SYNC_PROFILE_CACHE_DAYS ?? 7);
 
 /**
  * Runt een sync: zoekt vestigingen, haalt vestigingsprofielen op, filtert
@@ -59,8 +64,11 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
 
   let totalSearched = 0;
   let totalProfilesFetched = 0;
+  let profilesFromCache = 0;
   let totalLeadsCreated = 0;
   let totalLeadsUpdated = 0;
+
+  const cacheCutoff = new Date(Date.now() - PROFILE_CACHE_DAYS * 24 * 60 * 60 * 1000);
 
   try {
     for (const baseParams of options.searches) {
@@ -86,13 +94,40 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
           if (totalProfilesFetched >= maxProfiles) break;
           if (!item.vestigingsnummer) continue; // alleen vestigingen — geen losse rechtspersonen
 
+          // Cache-check: hebben we dit profiel recent al opgehaald? Zo ja,
+          // hergebruiken we de opgeslagen JSON in plaats van een nieuwe €0,02-call.
+          const cachedLead = await prisma.lead.findUnique({
+            where: { vestigingsnummer: item.vestigingsnummer },
+            select: { id: true, lastSyncedAt: true, rawProfileJson: true },
+          });
+
           let profile: KvkVestigingProfile;
-          try {
-            profile = await getVestigingsprofiel(item.vestigingsnummer);
-            totalProfilesFetched += 1;
-          } catch (e) {
-            errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
-            continue;
+          if (
+            cachedLead?.rawProfileJson &&
+            cachedLead.lastSyncedAt &&
+            cachedLead.lastSyncedAt > cacheCutoff
+          ) {
+            try {
+              profile = JSON.parse(cachedLead.rawProfileJson) as KvkVestigingProfile;
+              profilesFromCache += 1;
+            } catch {
+              // Corrupte cache — val terug op een verse call.
+              try {
+                profile = await getVestigingsprofiel(item.vestigingsnummer);
+                totalProfilesFetched += 1;
+              } catch (e) {
+                errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
+                continue;
+              }
+            }
+          } else {
+            try {
+              profile = await getVestigingsprofiel(item.vestigingsnummer);
+              totalProfilesFetched += 1;
+            } catch (e) {
+              errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
+              continue;
+            }
           }
 
           const sbiCodes = (profile.sbiActiviteiten ?? []).map((s) => s.sbiCode);
@@ -138,9 +173,8 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             source: "kvk-zoeken-api",
           };
 
-          const existing = await prisma.lead.findUnique({ where: { vestigingsnummer: profile.vestigingsnummer } });
-          if (existing) {
-            await prisma.lead.update({ where: { id: existing.id }, data });
+          if (cachedLead) {
+            await prisma.lead.update({ where: { id: cachedLead.id }, data });
             totalLeadsUpdated += 1;
           } else {
             await prisma.lead.create({ data });
@@ -159,6 +193,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
         finishedAt: new Date(),
         totalSearched,
         totalProfilesFetched,
+        profilesFromCache,
         totalLeadsCreated,
         totalLeadsUpdated,
         errors: errors.length ? JSON.stringify(errors) : null,
@@ -173,6 +208,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
         finishedAt: new Date(),
         totalSearched,
         totalProfilesFetched,
+        profilesFromCache,
         totalLeadsCreated,
         totalLeadsUpdated,
         errors: JSON.stringify(errors),
@@ -185,6 +221,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
     syncRunId: run.id,
     totalSearched,
     totalProfilesFetched,
+    profilesFromCache,
     totalLeadsCreated,
     totalLeadsUpdated,
     errors,

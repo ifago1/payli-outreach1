@@ -125,6 +125,9 @@ model SyncRun {
   searchParams    String?  // JSON van gebruikte zoekparams
   totalSearched   Int      @default(0)
   totalProfilesFetched Int @default(0)
+  // Vestigingsprofielen die uit lokale cache kwamen (zonder KVK-call) —
+  // gebruikt om bespaarde kosten zichtbaar te maken.
+  profilesFromCache    Int @default(0)
   totalLeadsCreated    Int @default(0)
   totalLeadsUpdated    Int @default(0)
   errors          String?  // JSON array van errors
