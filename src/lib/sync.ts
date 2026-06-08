@@ -16,6 +16,12 @@ export interface SyncOptions {
   maxProfiles?: number;
   /** Trigger label voor SyncRun. */
   trigger?: "manual" | "cron" | "import";
+  /**
+   * Testmodus: negeer de SBI-whitelist én het leeftijdsvenster en importeer
+   * elke gevonden vestiging. Handig om tegen de KVK test-API de pipeline
+   * end-to-end te verifiëren (de sandbox bevat geen echte nieuwe retail/horeca).
+   */
+  ignoreFilters?: boolean;
 }
 
 export interface SyncSummary {
@@ -40,6 +46,7 @@ const DEFAULT_MAX = Number(process.env.SYNC_MAX_PROFILES_PER_RUN ?? 200);
 export async function runSync(options: SyncOptions): Promise<SyncSummary> {
   const windowDays = options.newWithinDays ?? DEFAULT_WINDOW;
   const maxProfiles = options.maxProfiles ?? DEFAULT_MAX;
+  const ignoreFilters = options.ignoreFilters ?? false;
   const errors: string[] = [];
 
   const run = await prisma.syncRun.create({
@@ -90,7 +97,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
 
           const sbiCodes = (profile.sbiActiviteiten ?? []).map((s) => s.sbiCode);
           const targetMatch = findTargetSbi(sbiCodes);
-          if (!targetMatch) continue; // SBI valt buiten onze doelgroep
+          if (!targetMatch && !ignoreFilters) continue; // SBI valt buiten onze doelgroep
 
           const startDate = profile.materieleRegistratie?.datumAanvang
             ? new Date(profile.materieleRegistratie.datumAanvang)
@@ -102,11 +109,11 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             ? Math.floor((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24))
             : null;
 
-          if (windowDays !== null && ageDays !== null && ageDays > windowDays) continue;
+          if (!ignoreFilters && windowDays !== null && ageDays !== null && ageDays > windowDays) continue;
 
           const bezoek = (profile.adressen ?? []).find((a) => a.type === "bezoekadres") ?? profile.adressen?.[0];
           const primarySbi = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit) ?? profile.sbiActiviteiten?.[0];
-          const classified = classifySbi(primarySbi?.sbiCode ?? targetMatch.code);
+          const classified = classifySbi(primarySbi?.sbiCode ?? targetMatch?.code);
 
           const data = {
             kvkNumber: profile.kvkNummer,
@@ -119,8 +126,8 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             city: bezoek?.plaats ?? null,
             country: bezoek?.land ?? "Nederland",
             website: profile.websites?.[0] ?? null,
-            sbiCode: primarySbi?.sbiCode ?? targetMatch.code,
-            sbiDescription: primarySbi?.sbiOmschrijving ?? classified.description ?? targetMatch.description,
+            sbiCode: primarySbi?.sbiCode ?? targetMatch?.code ?? null,
+            sbiDescription: primarySbi?.sbiOmschrijving ?? classified.description ?? targetMatch?.description ?? null,
             sbiCodesAll: sbiCodes.join(","),
             category: classified.category,
             registeredAt: startDate,

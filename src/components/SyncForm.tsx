@@ -7,8 +7,10 @@ export function SyncForm() {
   const router = useRouter();
   const [cities, setCities] = useState("Amsterdam, Rotterdam, Utrecht, Den Haag, Eindhoven");
   const [postalPrefixes, setPostalPrefixes] = useState("");
+  const [names, setNames] = useState("");
   const [windowDays, setWindowDays] = useState("60");
   const [maxProfiles, setMaxProfiles] = useState("200");
+  const [ignoreFilters, setIgnoreFilters] = useState(false);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<null | {
     totalSearched: number;
@@ -33,14 +35,19 @@ export function SyncForm() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+    const namesList = names
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const searches = [
       ...citiesList.map((plaats) => ({ plaats })),
       ...postalList.map((postcode) => ({ postcode })),
+      ...namesList.map((handelsnaam) => ({ handelsnaam })),
     ];
 
     if (searches.length === 0) {
-      setError("Voeg minstens één plaats of postcode toe.");
+      setError("Voeg minstens één plaats, postcode of naam toe.");
       setPending(false);
       return;
     }
@@ -53,6 +60,7 @@ export function SyncForm() {
           searches,
           newWithinDays: Number(windowDays),
           maxProfiles: Number(maxProfiles),
+          ignoreFilters,
         }),
       });
       const data = await res.json();
@@ -91,6 +99,20 @@ export function SyncForm() {
         />
       </div>
 
+      <div>
+        <label className="block text-sm font-medium text-slate-700 mb-1">Zoek op naam (komma-gescheiden, optioneel)</label>
+        <input
+          className="input"
+          value={names}
+          onChange={(e) => setNames(e.target.value)}
+          placeholder="bijv. test  (werkt tegen de KVK test-API)"
+        />
+        <p className="text-xs text-slate-500 mt-1">
+          De KVK test-API reageert vooral op naam-zoekopdrachten. Gebruik <code>test</code> om de sandbox te
+          proberen.
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Max leeftijd inschrijving (dagen)</label>
@@ -102,6 +124,22 @@ export function SyncForm() {
           <p className="text-xs text-slate-500 mt-1">Beschermt tegen KVK API rate limits.</p>
         </div>
       </div>
+
+      <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={ignoreFilters}
+          onChange={(e) => setIgnoreFilters(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span className="text-sm">
+          <span className="font-medium text-slate-700">Testmodus — negeer SBI- en leeftijdsfilter</span>
+          <span className="block text-xs text-slate-500">
+            Importeert elke gevonden vestiging, ook buiten retail/horeca. Gebruik dit om met de KVK test-API te
+            verifiëren dat de pipeline werkt. Zet uit voor echte outreach.
+          </span>
+        </span>
+      </label>
 
       <div className="flex justify-end">
         <button className="btn-primary" type="submit" disabled={pending}>
