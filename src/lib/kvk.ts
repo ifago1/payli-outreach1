@@ -40,7 +40,7 @@ export interface KvkSearchResultItem {
 
 export interface KvkSearchResponse {
   pagina: number;
-  aantal: number;
+  resultatenPerPagina: number;
   totaal: number;
   resultaten: KvkSearchResultItem[];
 }
@@ -138,8 +138,11 @@ async function kvkFetch<T>(path: string, params?: Record<string, string | number
  * via de basisprofielen/vestigingsprofielen.
  */
 export function searchKvk(params: KvkSearchParams): Promise<KvkSearchResponse> {
+  // KVK Zoeken API v2 verwacht `naam` (niet `handelsnaam`) en
+  // `resultatenPerPagina` (niet `aantal`). Onze interne types houden de
+  // vriendelijke namen aan; we vertalen alleen op de API-boundary.
   return kvkFetch<KvkSearchResponse>("/zoeken", {
-    handelsnaam: params.handelsnaam,
+    naam: params.handelsnaam,
     kvkNummer: params.kvkNummer,
     straatnaam: params.straatnaam,
     plaats: params.plaats,
@@ -147,7 +150,7 @@ export function searchKvk(params: KvkSearchParams): Promise<KvkSearchResponse> {
     type: params.type,
     inclusiefInactieveRegistraties: params.inclusiefInactieveRegistraties,
     pagina: params.pagina ?? 1,
-    aantal: params.aantal ?? 100,
+    resultatenPerPagina: params.aantal ?? 100,
   });
 }
 
