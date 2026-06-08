@@ -42,12 +42,13 @@ systemd-service neer op `127.0.0.1:3000`.
    elke stop/start en breekt je DNS).
 2. **Cloudflare**: maak een **A-record** `outreach` → `<elastic-ip>` met de
    oranje wolk (proxied) aan.
-3. **Cloudflare → SSL/TLS → Overview**: zet op **Flexible** (Cloudflare praat
-   in HTTP met de origin). Upgrade later naar **Full (strict)** met een
-   Cloudflare Origin Certificate als je een cert op de origin wil installeren.
-4. **AWS security group**: open inkomend **TCP 80** vanaf `0.0.0.0/0`
-   (of strenger: alleen de [Cloudflare IPs](https://www.cloudflare.com/ips/)).
-   Sluit poort 3000 — die hoeft niet open te staan voor de buitenwereld.
+3. **Cloudflare → SSL/TLS → Overview**: zet op **Flexible** voor de eerste
+   test (Cloudflare praat in HTTP met de origin). Upgrade daarna naar
+   **Full (strict)** door [Cloudflare Origin Certificate te installeren](./deploy/cloudflare-origin-cert.md).
+4. **AWS security group**: open inkomend **TCP 80** (en **TCP 443** zodra je
+   het Origin Certificate hebt geinstalleerd) vanaf `0.0.0.0/0` — of strenger:
+   alleen de [Cloudflare IPs](https://www.cloudflare.com/ips/). Sluit poort
+   3000 — die hoeft niet open te staan voor de buitenwereld.
 
 ## Updaten naar een nieuwe versie
 
