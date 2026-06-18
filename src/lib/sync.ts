@@ -7,6 +7,25 @@ import {
 } from "@/lib/kvk";
 import { findTargetSbi, classifySbi } from "@/lib/sbi-codes";
 
+/**
+ * KVK geeft datums terug in YYYYMMDD-string-formaat (bv. "20060201"), niet
+ * als ISO 8601. Dit normaliseert beide vormen naar een geldige Date, of geeft
+ * null voor onbruikbare invoer (Prisma weigert "Invalid Date" op te slaan).
+ */
+function parseKvkDate(raw: string | null | undefined): Date | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  // YYYYMMDD (8 cijfers, geen scheidingstekens) — KVK's standaardvorm.
+  const ymd = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+  if (ymd) {
+    const d = new Date(`${ymd[1]}-${ymd[2]}-${ymd[3]}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  // Val terug op standaard parsing voor ISO-achtige strings.
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export interface SyncOptions {
   /** Steden en/of postcodes om te doorzoeken. Eén query per item. */
   searches: KvkSearchParams[];
@@ -161,11 +180,12 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             ?? sbiCodes[0]
             ?? null;
 
-          const startDate = profile.materieleRegistratie?.datumAanvang
-            ? new Date(profile.materieleRegistratie.datumAanvang)
-            : profile.formeleRegistratiedatum
-              ? new Date(profile.formeleRegistratiedatum)
-              : null;
+          // KVK levert datums als YYYYMMDD-string (bv. "20060201"), niet als
+          // ISO. Direct new Date("20060201") geeft Invalid Date — Prisma weigert
+          // die op te slaan. parseKvkDate normaliseert naar ISO.
+          const startDate =
+            parseKvkDate(profile.materieleRegistratie?.datumAanvang) ??
+            parseKvkDate(profile.formeleRegistratiedatum);
 
           const ageDays = startDate
             ? Math.floor((Date.now() - startDate.getTime()) / (1000 * 60 * 60 * 24))
