@@ -180,9 +180,20 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             ?? profile.sbiActiviteiten?.[0];
           const primarySbiForReject = primarySbiEntry?.sbiCode ?? sbiCodes[0] ?? null;
           const primarySbiDescription = primarySbiEntry?.sbiOmschrijving ?? null;
+          // Adres: profiel is rijkst (postcode/huisnummer), maar het
+          // zoekresultaat heeft gegarandeerd naam + plaats + straat. We
+          // gebruiken het profiel met het zoekresultaat als betrouwbare
+          // fallback, zodat plaats/handelsnaam altijd gevuld zijn.
+          const itemAdres = item.adres?.binnenlandsAdres;
           const bezoekAdres = (profile.adressen ?? []).find((a) => a.type === "bezoekadres") ?? profile.adressen?.[0];
-          const cityName = bezoekAdres?.plaats ?? null;
-          const handelsnaam = profile.eersteHandelsnaam ?? item.handelsnaam ?? null;
+          const cityName = bezoekAdres?.plaats ?? itemAdres?.plaats ?? null;
+          const streetName = bezoekAdres?.straatnaam ?? itemAdres?.straatnaam ?? null;
+          const postalCode = bezoekAdres?.postcode ?? itemAdres?.postcode ?? null;
+          const houseNumber =
+            [bezoekAdres?.huisnummer, bezoekAdres?.huisletter].filter(Boolean).join("") ||
+            [itemAdres?.huisnummer, itemAdres?.huisletter].filter(Boolean).join("") ||
+            null;
+          const handelsnaam = profile.eersteHandelsnaam ?? item.naam ?? null;
 
           // KVK levert datums als YYYYMMDD-string (bv. "20060201"), niet als
           // ISO. Direct new Date("20060201") geeft Invalid Date — Prisma weigert
@@ -241,9 +252,9 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             vestigingsnummer: profile.vestigingsnummer,
             isHoofdvestiging: profile.indHoofdvestiging ?? false,
             handelsnaam: handelsnaam ?? "",
-            street: bezoekAdres?.straatnaam ?? null,
-            houseNumber: [bezoekAdres?.huisnummer, bezoekAdres?.huisletter].filter(Boolean).join("") || null,
-            postalCode: bezoekAdres?.postcode ?? null,
+            street: streetName,
+            houseNumber,
+            postalCode,
             city: cityName,
             country: bezoekAdres?.land ?? "Nederland",
             website: profile.websites?.[0] ?? null,

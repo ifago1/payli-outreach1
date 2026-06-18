@@ -36,7 +36,7 @@ export interface KvkSearchParams {
 export interface KvkSearchResultItem {
   kvkNummer: string;
   vestigingsnummer?: string;
-  handelsnaam: string;
+  naam: string; // KVK Zoeken v2 noemt dit veld `naam` (niet handelsnaam)
   type: string; // "hoofdvestiging" | "nevenvestiging" | "rechtspersoon"
   adres?: {
     binnenlandsAdres?: {
