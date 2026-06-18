@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const items = [
   { href: "/", label: "Dashboard" },
   { href: "/leads", label: "Leads" },
+  { href: "/profielen", label: "Profielen" },
   { href: "/templates", label: "E-mailtemplates" },
   { href: "/sync", label: "KVK-sync" },
 ];

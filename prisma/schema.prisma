@@ -146,8 +146,11 @@ model SyncRun {
 model RejectedVestiging {
   vestigingsnummer String   @id
   kvkNumber        String?
+  handelsnaam      String?  // ingevuld vanaf de eerste sync na deze migratie
+  city             String?
   reason           String   // "sbi-mismatch" | "too-old" | "no-vestigingsnummer"
   sbiCode          String?
+  sbiDescription   String?
   registeredAt     DateTime?
   checkedAt        DateTime @default(now()) // informatief: wanneer voor het laatst beoordeeld
   @@index([checkedAt])

@@ -176,9 +176,13 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
 
           const sbiCodes = (profile.sbiActiviteiten ?? []).map((s) => s.sbiCode);
           const targetMatch = findTargetSbi(sbiCodes);
-          const primarySbiForReject = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit)?.sbiCode
-            ?? sbiCodes[0]
-            ?? null;
+          const primarySbiEntry = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit)
+            ?? profile.sbiActiviteiten?.[0];
+          const primarySbiForReject = primarySbiEntry?.sbiCode ?? sbiCodes[0] ?? null;
+          const primarySbiDescription = primarySbiEntry?.sbiOmschrijving ?? null;
+          const bezoekAdres = (profile.adressen ?? []).find((a) => a.type === "bezoekadres") ?? profile.adressen?.[0];
+          const cityName = bezoekAdres?.plaats ?? null;
+          const handelsnaam = profile.eersteHandelsnaam ?? item.handelsnaam ?? null;
 
           // KVK levert datums als YYYYMMDD-string (bv. "20060201"), niet als
           // ISO. Direct new Date("20060201") geeft Invalid Date — Prisma weigert
@@ -194,63 +198,57 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
           if (!targetMatch && !ignoreFilters) {
             // SBI valt buiten onze doelgroep — onthouden zodat we 'm bij een
             // volgende sync niet opnieuw oppikken (en betalen).
+            const rejectData = {
+              kvkNumber: profile.kvkNummer,
+              handelsnaam,
+              city: cityName,
+              reason: "sbi-mismatch",
+              sbiCode: primarySbiForReject,
+              sbiDescription: primarySbiDescription,
+              registeredAt: startDate,
+            };
             await prisma.rejectedVestiging.upsert({
               where: { vestigingsnummer: profile.vestigingsnummer },
-              create: {
-                vestigingsnummer: profile.vestigingsnummer,
-                kvkNumber: profile.kvkNummer,
-                reason: "sbi-mismatch",
-                sbiCode: primarySbiForReject,
-                registeredAt: startDate,
-              },
-              update: {
-                reason: "sbi-mismatch",
-                sbiCode: primarySbiForReject,
-                registeredAt: startDate,
-                checkedAt: new Date(),
-              },
+              create: { vestigingsnummer: profile.vestigingsnummer, ...rejectData },
+              update: { ...rejectData, checkedAt: new Date() },
             });
             continue;
           }
 
           if (!ignoreFilters && windowDays !== null && ageDays !== null && ageDays > windowDays) {
             // Wel de juiste SBI, maar inschrijving valt buiten ons "nieuw"-venster.
+            const rejectData = {
+              kvkNumber: profile.kvkNummer,
+              handelsnaam,
+              city: cityName,
+              reason: "too-old",
+              sbiCode: primarySbiForReject,
+              sbiDescription: primarySbiDescription,
+              registeredAt: startDate,
+            };
             await prisma.rejectedVestiging.upsert({
               where: { vestigingsnummer: profile.vestigingsnummer },
-              create: {
-                vestigingsnummer: profile.vestigingsnummer,
-                kvkNumber: profile.kvkNummer,
-                reason: "too-old",
-                sbiCode: primarySbiForReject,
-                registeredAt: startDate,
-              },
-              update: {
-                reason: "too-old",
-                sbiCode: primarySbiForReject,
-                registeredAt: startDate,
-                checkedAt: new Date(),
-              },
+              create: { vestigingsnummer: profile.vestigingsnummer, ...rejectData },
+              update: { ...rejectData, checkedAt: new Date() },
             });
             continue;
           }
 
-          const bezoek = (profile.adressen ?? []).find((a) => a.type === "bezoekadres") ?? profile.adressen?.[0];
-          const primarySbi = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit) ?? profile.sbiActiviteiten?.[0];
-          const classified = classifySbi(primarySbi?.sbiCode ?? targetMatch?.code);
+          const classified = classifySbi(primarySbiEntry?.sbiCode ?? targetMatch?.code);
 
           const data = {
             kvkNumber: profile.kvkNummer,
             vestigingsnummer: profile.vestigingsnummer,
             isHoofdvestiging: profile.indHoofdvestiging ?? false,
-            handelsnaam: profile.eersteHandelsnaam ?? item.handelsnaam,
-            street: bezoek?.straatnaam ?? null,
-            houseNumber: [bezoek?.huisnummer, bezoek?.huisletter].filter(Boolean).join("") || null,
-            postalCode: bezoek?.postcode ?? null,
-            city: bezoek?.plaats ?? null,
-            country: bezoek?.land ?? "Nederland",
+            handelsnaam: handelsnaam ?? "",
+            street: bezoekAdres?.straatnaam ?? null,
+            houseNumber: [bezoekAdres?.huisnummer, bezoekAdres?.huisletter].filter(Boolean).join("") || null,
+            postalCode: bezoekAdres?.postcode ?? null,
+            city: cityName,
+            country: bezoekAdres?.land ?? "Nederland",
             website: profile.websites?.[0] ?? null,
-            sbiCode: primarySbi?.sbiCode ?? targetMatch?.code ?? null,
-            sbiDescription: primarySbi?.sbiOmschrijving ?? classified.description ?? targetMatch?.description ?? null,
+            sbiCode: primarySbiForReject ?? targetMatch?.code ?? null,
+            sbiDescription: primarySbiDescription ?? classified.description ?? targetMatch?.description ?? null,
             sbiCodesAll: sbiCodes.join(","),
             category: classified.category,
             registeredAt: startDate,
