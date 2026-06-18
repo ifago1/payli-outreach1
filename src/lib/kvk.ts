@@ -1,10 +1,25 @@
 // KVK API client — werkt tegen zowel de test- als productie-omgeving.
-// Test base URL: https://api.kvk.nl/test/api/v2
-// Productie:     https://api.kvk.nl/api/v2
+// LET OP: de drie API's hebben verschillende versies (bevestigd via
+// developers.kvk.nl):
+//   Zoeken           → /api/v2/zoeken
+//   Basisprofiel     → /api/v1/basisprofielen/{kvkNummer}
+//   Vestigingsprofiel→ /api/v1/vestigingsprofielen/{vestigingsnummer}
+// Daarom leiden we de host-root af uit KVK_API_BASE_URL en bouwen per endpoint
+// het juiste versiepad. Een verkeerd versiepad (bv. /api/v2/vestigingsprofielen)
+// laat KVK's gateway de verbinding vallen → "empty reply from server".
 // Vereist API-key via header `apikey`. Aanvragen via https://developers.kvk.nl.
 
-const BASE_URL = process.env.KVK_API_BASE_URL ?? "https://api.kvk.nl/test/api/v2";
+const RAW_BASE = process.env.KVK_API_BASE_URL ?? "https://api.kvk.nl/test/api/v2";
 const API_KEY = process.env.KVK_API_KEY ?? "";
+
+// Strip een eventueel /api/vN-suffix zodat we de root overhouden
+// (https://api.kvk.nl  of  https://api.kvk.nl/test). Zo blijven bestaande
+// .env-configs met .../api/v2 gewoon werken.
+const API_ROOT = RAW_BASE.replace(/\/+$/, "").replace(/\/api\/v\d+$/, "");
+
+const ZOEKEN_URL = `${API_ROOT}/api/v2/zoeken`;
+const BASISPROFIEL_BASE = `${API_ROOT}/api/v1/basisprofielen`;
+const VESTIGINGSPROFIEL_BASE = `${API_ROOT}/api/v1/vestigingsprofielen`;
 
 export interface KvkSearchParams {
   handelsnaam?: string;
@@ -134,9 +149,9 @@ async function readBody(res: Response): Promise<unknown> {
   }
 }
 
-async function kvkFetch<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+async function kvkFetch<T>(fullUrl: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
   assertConfigured();
-  const url = new URL(`${BASE_URL}${path}`);
+  const url = new URL(fullUrl);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === "") continue;
@@ -193,7 +208,7 @@ export function searchKvk(params: KvkSearchParams): Promise<KvkSearchResponse> {
   // KVK Zoeken API v2 verwacht `naam` (niet `handelsnaam`) en
   // `resultatenPerPagina` (niet `aantal`). Onze interne types houden de
   // vriendelijke namen aan; we vertalen alleen op de API-boundary.
-  return kvkFetch<KvkSearchResponse>("/zoeken", {
+  return kvkFetch<KvkSearchResponse>(ZOEKEN_URL, {
     naam: params.handelsnaam,
     kvkNummer: params.kvkNummer,
     straatnaam: params.straatnaam,
@@ -207,11 +222,11 @@ export function searchKvk(params: KvkSearchParams): Promise<KvkSearchResponse> {
 }
 
 export function getBasisprofiel(kvkNummer: string): Promise<KvkBasisprofiel> {
-  return kvkFetch<KvkBasisprofiel>(`/basisprofielen/${encodeURIComponent(kvkNummer)}`);
+  return kvkFetch<KvkBasisprofiel>(`${BASISPROFIEL_BASE}/${encodeURIComponent(kvkNummer)}`);
 }
 
 export function getVestigingsprofiel(vestigingsnummer: string): Promise<KvkVestigingProfile> {
-  return kvkFetch<KvkVestigingProfile>(`/vestigingsprofielen/${encodeURIComponent(vestigingsnummer)}`);
+  return kvkFetch<KvkVestigingProfile>(`${VESTIGINGSPROFIEL_BASE}/${encodeURIComponent(vestigingsnummer)}`);
 }
 
 /** Helper: bouwt een leesbaar adres uit een zoekresultaat. */
