@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import {
   getVestigingsprofiel,
+  isJa,
   searchKvk,
   type KvkSearchParams,
   type KvkVestigingProfile,
@@ -176,7 +177,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
 
           const sbiCodes = (profile.sbiActiviteiten ?? []).map((s) => s.sbiCode);
           const targetMatch = findTargetSbi(sbiCodes);
-          const primarySbiEntry = profile.sbiActiviteiten?.find((s) => s.indHoofdactiviteit)
+          const primarySbiEntry = profile.sbiActiviteiten?.find((s) => isJa(s.indHoofdactiviteit))
             ?? profile.sbiActiviteiten?.[0];
           const primarySbiForReject = primarySbiEntry?.sbiCode ?? sbiCodes[0] ?? null;
           const primarySbiDescription = primarySbiEntry?.sbiOmschrijving ?? null;
@@ -250,7 +251,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
           const data = {
             kvkNumber: profile.kvkNummer,
             vestigingsnummer: profile.vestigingsnummer,
-            isHoofdvestiging: profile.indHoofdvestiging ?? false,
+            isHoofdvestiging: isJa(profile.indHoofdvestiging),
             handelsnaam: handelsnaam ?? "",
             street: streetName,
             houseNumber,

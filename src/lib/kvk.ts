@@ -68,14 +68,14 @@ export interface KvkVestigingProfile {
   materieleRegistratie?: { datumAanvang?: string; datumEinde?: string };
   eersteHandelsnaam?: string;
   totaalWerkzamePersonen?: number;
-  fulltimeWerkzamePersonen?: number;
-  parttimeWerkzamePersonen?: number;
-  indHoofdvestiging?: boolean;
-  indCommercieleVestiging?: string;
+  voltijdWerkzamePersonen?: number;
+  deeltijdWerkzamePersonen?: number;
+  // KVK levert deze indicatoren als "Ja"/"Nee" strings (niet als boolean).
+  indHoofdvestiging?: string | boolean;
+  indCommercieleVestiging?: string | boolean;
   voortzettingsId?: string;
-  deeltijdwerkers?: number;
   websites?: string[];
-  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: boolean }[];
+  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: string | boolean }[];
   adressen?: {
     type: string; // "bezoekadres" | "correspondentieadres"
     indAfgeschermd?: string;
@@ -90,6 +90,11 @@ export interface KvkVestigingProfile {
   handelsnamen?: { naam: string; volgorde?: number }[];
 }
 
+/** KVK indicatoren komen als "Ja"/"Nee" strings (soms boolean) — normaliseer. */
+export function isJa(value: string | boolean | null | undefined): boolean {
+  return value === true || value === "Ja" || value === "ja" || value === "true";
+}
+
 export interface KvkBasisprofiel {
   kvkNummer: string;
   indNonMailing?: string;
@@ -97,7 +102,7 @@ export interface KvkBasisprofiel {
   materieleRegistratie?: { datumAanvang?: string; datumEinde?: string };
   statutaireNaam?: string;
   totaalWerkzamePersonen?: number;
-  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: boolean }[];
+  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: string | boolean }[];
   _embedded?: {
     hoofdvestiging?: KvkVestigingProfile;
     eigenaar?: unknown;
