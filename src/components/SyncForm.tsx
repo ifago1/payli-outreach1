@@ -168,11 +168,17 @@ export function SyncForm() {
                 )}
               </p>
               <p className="mt-1 text-emerald-900">
-                KVK-kosten deze run: <strong>{formatCents(cost.cents)}</strong>
+                KVK-kosten deze run: <strong>{formatCents(cost.cents)}</strong>{" "}
+                <span className="text-emerald-700">
+                  ({result.totalProfilesFetched} nieuwe profielen × € 0,02)
+                </span>
                 {(cost.savedCents > 0 || result.profilesSkippedRejected > 0) && (
                   <span className="text-emerald-700">
-                    {" · bespaard: "}
+                    {" · bespaard "}
                     {formatCents(cost.savedCents + result.profilesSkippedRejected * 2)}
+                    {" doordat "}
+                    {result.profilesFromCache + result.profilesSkippedRejected} reeds bekende vestiging(en) zijn
+                    overgeslagen
                   </span>
                 )}
               </p>

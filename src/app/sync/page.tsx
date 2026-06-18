@@ -88,7 +88,10 @@ export default async function SyncPage() {
                           </span>
                         )}
                       </td>
-                      <td className="py-2 pr-4 font-medium text-slate-700">
+                      <td
+                        className="py-2 pr-4 font-medium text-slate-700"
+                        title={`${r.totalProfilesFetched} nieuwe profielen × € 0,02. Overgeslagen (reeds bekende) vestigingen kosten niets.`}
+                      >
                         {formatCents(cost.cents)}
                         {(cost.savedCents > 0 || r.profilesSkippedRejected > 0) && (
                           <span className="block text-xs text-emerald-600 font-normal">
