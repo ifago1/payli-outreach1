@@ -1,10 +1,25 @@
 // KVK API client — werkt tegen zowel de test- als productie-omgeving.
-// Test base URL: https://api.kvk.nl/test/api/v2
-// Productie:     https://api.kvk.nl/api/v2
+// LET OP: de drie API's hebben verschillende versies (bevestigd via
+// developers.kvk.nl):
+//   Zoeken           → /api/v2/zoeken
+//   Basisprofiel     → /api/v1/basisprofielen/{kvkNummer}
+//   Vestigingsprofiel→ /api/v1/vestigingsprofielen/{vestigingsnummer}
+// Daarom leiden we de host-root af uit KVK_API_BASE_URL en bouwen per endpoint
+// het juiste versiepad. Een verkeerd versiepad (bv. /api/v2/vestigingsprofielen)
+// laat KVK's gateway de verbinding vallen → "empty reply from server".
 // Vereist API-key via header `apikey`. Aanvragen via https://developers.kvk.nl.
 
-const BASE_URL = process.env.KVK_API_BASE_URL ?? "https://api.kvk.nl/test/api/v2";
+const RAW_BASE = process.env.KVK_API_BASE_URL ?? "https://api.kvk.nl/test/api/v2";
 const API_KEY = process.env.KVK_API_KEY ?? "";
+
+// Strip een eventueel /api/vN-suffix zodat we de root overhouden
+// (https://api.kvk.nl  of  https://api.kvk.nl/test). Zo blijven bestaande
+// .env-configs met .../api/v2 gewoon werken.
+const API_ROOT = RAW_BASE.replace(/\/+$/, "").replace(/\/api\/v\d+$/, "");
+
+const ZOEKEN_URL = `${API_ROOT}/api/v2/zoeken`;
+const BASISPROFIEL_BASE = `${API_ROOT}/api/v1/basisprofielen`;
+const VESTIGINGSPROFIEL_BASE = `${API_ROOT}/api/v1/vestigingsprofielen`;
 
 export interface KvkSearchParams {
   handelsnaam?: string;
@@ -21,7 +36,7 @@ export interface KvkSearchParams {
 export interface KvkSearchResultItem {
   kvkNummer: string;
   vestigingsnummer?: string;
-  handelsnaam: string;
+  naam: string; // KVK Zoeken v2 noemt dit veld `naam` (niet handelsnaam)
   type: string; // "hoofdvestiging" | "nevenvestiging" | "rechtspersoon"
   adres?: {
     binnenlandsAdres?: {
@@ -40,7 +55,7 @@ export interface KvkSearchResultItem {
 
 export interface KvkSearchResponse {
   pagina: number;
-  aantal: number;
+  resultatenPerPagina: number;
   totaal: number;
   resultaten: KvkSearchResultItem[];
 }
@@ -53,14 +68,14 @@ export interface KvkVestigingProfile {
   materieleRegistratie?: { datumAanvang?: string; datumEinde?: string };
   eersteHandelsnaam?: string;
   totaalWerkzamePersonen?: number;
-  fulltimeWerkzamePersonen?: number;
-  parttimeWerkzamePersonen?: number;
-  indHoofdvestiging?: boolean;
-  indCommercieleVestiging?: string;
+  voltijdWerkzamePersonen?: number;
+  deeltijdWerkzamePersonen?: number;
+  // KVK levert deze indicatoren als "Ja"/"Nee" strings (niet als boolean).
+  indHoofdvestiging?: string | boolean;
+  indCommercieleVestiging?: string | boolean;
   voortzettingsId?: string;
-  deeltijdwerkers?: number;
   websites?: string[];
-  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: boolean }[];
+  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: string | boolean }[];
   adressen?: {
     type: string; // "bezoekadres" | "correspondentieadres"
     indAfgeschermd?: string;
@@ -75,6 +90,11 @@ export interface KvkVestigingProfile {
   handelsnamen?: { naam: string; volgorde?: number }[];
 }
 
+/** KVK indicatoren komen als "Ja"/"Nee" strings (soms boolean) — normaliseer. */
+export function isJa(value: string | boolean | null | undefined): boolean {
+  return value === true || value === "Ja" || value === "ja" || value === "true";
+}
+
 export interface KvkBasisprofiel {
   kvkNummer: string;
   indNonMailing?: string;
@@ -82,7 +102,7 @@ export interface KvkBasisprofiel {
   materieleRegistratie?: { datumAanvang?: string; datumEinde?: string };
   statutaireNaam?: string;
   totaalWerkzamePersonen?: number;
-  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: boolean }[];
+  sbiActiviteiten?: { sbiCode: string; sbiOmschrijving: string; indHoofdactiviteit: string | boolean }[];
   _embedded?: {
     hoofdvestiging?: KvkVestigingProfile;
     eigenaar?: unknown;
@@ -107,29 +127,81 @@ function assertConfigured(): void {
   }
 }
 
-async function kvkFetch<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+const MAX_RETRIES = Number(process.env.KVK_MAX_RETRIES ?? 3);
+const REQUEST_TIMEOUT_MS = Number(process.env.KVK_REQUEST_TIMEOUT_MS ?? 20000);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Maakt de echte oorzaak van een `fetch failed` leesbaar (ECONNRESET, timeout, TLS…). */
+function describeFetchError(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: unknown };
+  if (err?.name === "TimeoutError") return `timeout na ${REQUEST_TIMEOUT_MS}ms`;
+  const cause = err?.cause as { code?: string; message?: string } | undefined;
+  if (cause?.code) return `${err.message} (${cause.code})`;
+  if (cause?.message) return `${err.message} (${cause.message})`;
+  return err?.message ?? String(e);
+}
+
+async function readBody(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    try {
+      return await res.text();
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function kvkFetch<T>(fullUrl: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
   assertConfigured();
-  const url = new URL(`${BASE_URL}${path}`);
+  const url = new URL(fullUrl);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined || v === null || v === "") continue;
       url.searchParams.set(k, String(v));
     }
   }
-  const res = await fetch(url.toString(), {
-    headers: { apikey: API_KEY, accept: "application/hal+json" },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
+
+  let lastError: KvkApiError | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponentiële backoff: 0,5s · 1s · 2s. Geeft een gereset keep-alive
+      // socket of een rate-limit de tijd om te herstellen.
+      await sleep(500 * 2 ** (attempt - 1));
     }
-    throw new KvkApiError(res.status, body);
+
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { apikey: API_KEY, accept: "application/hal+json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (e) {
+      // Netwerkfout (fetch failed / timeout / connection reset). Vaak een
+      // hergebruikte keep-alive verbinding die de server heeft gesloten —
+      // een nieuwe poging opent een verse socket en slaagt meestal.
+      lastError = new KvkApiError(0, null, `netwerkfout: ${describeFetchError(e)}`);
+      continue;
+    }
+
+    // 429 (rate limit) en 5xx zijn tijdelijk → opnieuw proberen.
+    if (res.status === 429 || res.status >= 500) {
+      lastError = new KvkApiError(res.status, await readBody(res));
+      continue;
+    }
+
+    // Andere 4xx (401/403/404) zijn permanent → meteen falen, geen retry.
+    if (!res.ok) {
+      throw new KvkApiError(res.status, await readBody(res));
+    }
+
+    return (await res.json()) as T;
   }
-  return (await res.json()) as T;
+
+  throw lastError ?? new KvkApiError(0, null, "onbekende fout");
 }
 
 /**
@@ -138,8 +210,11 @@ async function kvkFetch<T>(path: string, params?: Record<string, string | number
  * via de basisprofielen/vestigingsprofielen.
  */
 export function searchKvk(params: KvkSearchParams): Promise<KvkSearchResponse> {
-  return kvkFetch<KvkSearchResponse>("/zoeken", {
-    handelsnaam: params.handelsnaam,
+  // KVK Zoeken API v2 verwacht `naam` (niet `handelsnaam`) en
+  // `resultatenPerPagina` (niet `aantal`). Onze interne types houden de
+  // vriendelijke namen aan; we vertalen alleen op de API-boundary.
+  return kvkFetch<KvkSearchResponse>(ZOEKEN_URL, {
+    naam: params.handelsnaam,
     kvkNummer: params.kvkNummer,
     straatnaam: params.straatnaam,
     plaats: params.plaats,
@@ -147,16 +222,16 @@ export function searchKvk(params: KvkSearchParams): Promise<KvkSearchResponse> {
     type: params.type,
     inclusiefInactieveRegistraties: params.inclusiefInactieveRegistraties,
     pagina: params.pagina ?? 1,
-    aantal: params.aantal ?? 100,
+    resultatenPerPagina: params.aantal ?? 100,
   });
 }
 
 export function getBasisprofiel(kvkNummer: string): Promise<KvkBasisprofiel> {
-  return kvkFetch<KvkBasisprofiel>(`/basisprofielen/${encodeURIComponent(kvkNummer)}`);
+  return kvkFetch<KvkBasisprofiel>(`${BASISPROFIEL_BASE}/${encodeURIComponent(kvkNummer)}`);
 }
 
 export function getVestigingsprofiel(vestigingsnummer: string): Promise<KvkVestigingProfile> {
-  return kvkFetch<KvkVestigingProfile>(`/vestigingsprofielen/${encodeURIComponent(vestigingsnummer)}`);
+  return kvkFetch<KvkVestigingProfile>(`${VESTIGINGSPROFIEL_BASE}/${encodeURIComponent(vestigingsnummer)}`);
 }
 
 /** Helper: bouwt een leesbaar adres uit een zoekresultaat. */

@@ -1,0 +1,39 @@
+# Caddyfile voor payli-outreach achter Cloudflare.
+# Plaats op de server: sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+#
+# Installeer EERST het Cloudflare Origin Certificate (zie deploy/cloudflare-origin-cert.md)
+# voordat je Caddy reload, anders faalt het starten op het ontbrekende cert-bestand.
+
+{
+    # Caddy hoeft geen Let's Encrypt te draaien — Cloudflare termineert TLS
+    # voor bezoekers, en voor CF→origin gebruiken we een handmatig
+    # geïnstalleerd Cloudflare Origin Certificate. disable_redirects voorkomt
+    # dat Caddy HTTP→HTTPS-redirects aanmaakt; we willen beide poorten
+    # bruikbaar houden zodat CF in elke SSL-modus (Flexible / Full / Full strict)
+    # de origin kan bereiken.
+    auto_https disable_redirects
+}
+
+# HTTPS — gebruikt door Cloudflare in Full / Full (strict) modus
+outreach.payli.be:443 {
+    tls /etc/caddy/origin.crt /etc/caddy/origin.key
+
+    reverse_proxy 127.0.0.1:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+
+    encode gzip
+}
+
+# HTTP — gebruikt door Cloudflare in Flexible modus
+:80 {
+    reverse_proxy 127.0.0.1:3000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+
+    encode gzip
+}

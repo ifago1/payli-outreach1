@@ -38,6 +38,19 @@ export function categoryLabel(cat: string): string {
   }
 }
 
+export function rejectionReasonLabel(reason: string): string {
+  switch (reason) {
+    case "sbi-mismatch":
+      return "Buiten SBI-doelgroep";
+    case "too-old":
+      return "Inschrijving te oud";
+    case "no-vestigingsnummer":
+      return "Geen vestigingsnummer";
+    default:
+      return reason;
+  }
+}
+
 export function statusLabel(s: string): string {
   switch (s) {
     case "NEW":

@@ -1,0 +1,21 @@
+[Unit]
+Description=Payli Outreach (Next.js production)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/payli-outreach1
+EnvironmentFile=/home/ubuntu/payli-outreach1/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=payli-outreach
+
+[Install]
+WantedBy=multi-user.target

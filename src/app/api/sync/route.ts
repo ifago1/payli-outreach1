@@ -14,6 +14,7 @@ const bodySchema = z.object({
   searches: z.array(searchSchema).min(1),
   newWithinDays: z.number().int().positive().nullable().optional(),
   maxProfiles: z.number().int().positive().max(2000).optional(),
+  ignoreFilters: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
       searches: parsed.data.searches,
       newWithinDays: parsed.data.newWithinDays ?? undefined,
       maxProfiles: parsed.data.maxProfiles,
+      ignoreFilters: parsed.data.ignoreFilters,
       trigger: "manual",
     });
     return NextResponse.json(summary);
