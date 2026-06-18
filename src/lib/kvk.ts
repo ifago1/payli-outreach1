@@ -107,6 +107,33 @@ function assertConfigured(): void {
   }
 }
 
+const MAX_RETRIES = Number(process.env.KVK_MAX_RETRIES ?? 3);
+const REQUEST_TIMEOUT_MS = Number(process.env.KVK_REQUEST_TIMEOUT_MS ?? 20000);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Maakt de echte oorzaak van een `fetch failed` leesbaar (ECONNRESET, timeout, TLS…). */
+function describeFetchError(e: unknown): string {
+  const err = e as { name?: string; message?: string; cause?: unknown };
+  if (err?.name === "TimeoutError") return `timeout na ${REQUEST_TIMEOUT_MS}ms`;
+  const cause = err?.cause as { code?: string; message?: string } | undefined;
+  if (cause?.code) return `${err.message} (${cause.code})`;
+  if (cause?.message) return `${err.message} (${cause.message})`;
+  return err?.message ?? String(e);
+}
+
+async function readBody(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    try {
+      return await res.text();
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function kvkFetch<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
   assertConfigured();
   const url = new URL(`${BASE_URL}${path}`);
@@ -116,20 +143,45 @@ async function kvkFetch<T>(path: string, params?: Record<string, string | number
       url.searchParams.set(k, String(v));
     }
   }
-  const res = await fetch(url.toString(), {
-    headers: { apikey: API_KEY, accept: "application/hal+json" },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = await res.text();
+
+  let lastError: KvkApiError | null = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponentiële backoff: 0,5s · 1s · 2s. Geeft een gereset keep-alive
+      // socket of een rate-limit de tijd om te herstellen.
+      await sleep(500 * 2 ** (attempt - 1));
     }
-    throw new KvkApiError(res.status, body);
+
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { apikey: API_KEY, accept: "application/hal+json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (e) {
+      // Netwerkfout (fetch failed / timeout / connection reset). Vaak een
+      // hergebruikte keep-alive verbinding die de server heeft gesloten —
+      // een nieuwe poging opent een verse socket en slaagt meestal.
+      lastError = new KvkApiError(0, null, `netwerkfout: ${describeFetchError(e)}`);
+      continue;
+    }
+
+    // 429 (rate limit) en 5xx zijn tijdelijk → opnieuw proberen.
+    if (res.status === 429 || res.status >= 500) {
+      lastError = new KvkApiError(res.status, await readBody(res));
+      continue;
+    }
+
+    // Andere 4xx (401/403/404) zijn permanent → meteen falen, geen retry.
+    if (!res.ok) {
+      throw new KvkApiError(res.status, await readBody(res));
+    }
+
+    return (await res.json()) as T;
   }
-  return (await res.json()) as T;
+
+  throw lastError ?? new KvkApiError(0, null, "onbekende fout");
 }
 
 /**
