@@ -125,8 +125,8 @@ model SyncRun {
   searchParams    String?  // JSON van gebruikte zoekparams
   totalSearched   Int      @default(0)
   totalProfilesFetched Int @default(0)
-  // Vestigingsprofielen die uit lokale cache kwamen (zonder KVK-call) —
-  // gebruikt om bespaarde kosten zichtbaar te maken.
+  // Vestigingen die we al als lead kenden en dus oversloegen zonder een
+  // (tweede) KVK-call. Pure besparing.
   profilesFromCache    Int @default(0)
   // Vestigingen die we eerder afgekeurd hadden en dus oversloegen voordat
   // we ook maar een KVK-profiel opvroegen. Pure besparing.
@@ -139,17 +139,16 @@ model SyncRun {
 
 // Vestigingen die we via de Zoeken-API hebben opgepikt maar bij het ophalen
 // van het profiel blijken NIET binnen onze doelgroep te vallen (verkeerde SBI
-// of te oude inschrijving). Hier onthouden we ze zodat we ze bij een volgende
-// sync overslaan — anders betalen we elke run opnieuw €0,02 per profielcheck
-// voor diezelfde niet-relevante bedrijven.
+// of te oude inschrijving). We onthouden ze PERMANENT zodat we ze bij elke
+// volgende sync overslaan zonder opnieuw €0,02 per profielcheck te betalen.
+// Een "too-old"-afwijzing wordt alleen maar ouder; een "sbi-mismatch" kan in
+// theorie wijzigen — gebruik dan testmodus om opnieuw te beoordelen.
 model RejectedVestiging {
   vestigingsnummer String   @id
   kvkNumber        String?
   reason           String   // "sbi-mismatch" | "too-old" | "no-vestigingsnummer"
   sbiCode          String?
   registeredAt     DateTime?
-  checkedAt        DateTime @default(now())
-  // We refreshen oude rejects op den duur — anders missen we een vestiging die
-  // van SBI wisselt (bv. een groothandel die retail-winkel wordt).
+  checkedAt        DateTime @default(now()) // informatief: wanneer voor het laatst beoordeeld
   @@index([checkedAt])
 }

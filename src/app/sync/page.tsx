@@ -50,7 +50,7 @@ export default async function SyncPage() {
                   <th className="py-2 pr-4 font-medium">Gestart</th>
                   <th className="py-2 pr-4 font-medium">Status</th>
                   <th className="py-2 pr-4 font-medium">Trigger</th>
-                  <th className="py-2 pr-4 font-medium">Profielen (cache)</th>
+                  <th className="py-2 pr-4 font-medium">Profielen (overgeslagen)</th>
                   <th className="py-2 pr-4 font-medium">KVK-kosten</th>
                   <th className="py-2 pr-4 font-medium">Leads nieuw / update</th>
                   <th className="py-2 pr-4 font-medium">Foutmeldingen</th>
@@ -82,9 +82,9 @@ export default async function SyncPage() {
                         {(r.profilesFromCache > 0 || r.profilesSkippedRejected > 0) && (
                           <span className="text-slate-400">
                             {" "}
-                            ({r.profilesFromCache > 0 && `${r.profilesFromCache} cache`}
+                            ({r.profilesFromCache > 0 && `${r.profilesFromCache} bekend`}
                             {r.profilesFromCache > 0 && r.profilesSkippedRejected > 0 && ", "}
-                            {r.profilesSkippedRejected > 0 && `${r.profilesSkippedRejected} skip`})
+                            {r.profilesSkippedRejected > 0 && `${r.profilesSkippedRejected} afgewezen`})
                           </span>
                         )}
                       </td>
@@ -133,9 +133,9 @@ export default async function SyncPage() {
         </p>
         <p className="text-slate-600">
           <strong>Kosten per call:</strong> Zoeken-API is gratis, elk vestigingsprofiel kost <strong>€ 0,02</strong>{" "}
-          (plus € 6,40 vast per maand). Profielen die we de afgelopen 7 dagen al hebben opgehaald (zie{" "}
-          <code className="bg-slate-100 px-1 rounded">SYNC_PROFILE_CACHE_DAYS</code> in <code>.env</code>) halen
-          we uit onze lokale cache — die tellen niet mee voor de kosten.
+          (plus € 6,40 vast per maand). Elk vestigingsnummer dat we al kennen — als lead óf als eerdere
+          afwijzing — wordt <strong>permanent overgeslagen</strong>: we halen een profiel dus nooit twee keer op.
+          Zo betaal je de € 0,02 precies één keer per vestiging, hoe vaak je dezelfde regio ook opnieuw scant.
         </p>
         <p className="text-slate-600">
           Voor échte dagelijkse nieuwe inschrijvingen op grote schaal heb je het{" "}

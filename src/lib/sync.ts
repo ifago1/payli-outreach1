@@ -37,15 +37,16 @@ export interface SyncSummary {
 
 const DEFAULT_WINDOW = Number(process.env.SYNC_NEW_BUSINESS_WINDOW_DAYS ?? 60);
 const DEFAULT_MAX = Number(process.env.SYNC_MAX_PROFILES_PER_RUN ?? 200);
-// Vestigingsprofielen die we de afgelopen N dagen al hebben opgehaald
-// hergebruiken we uit de database in plaats van opnieuw bij KVK aan te kloppen.
-// Bespaart €0,02 per profiel — bij re-syncs van dezelfde regio gaat dat hard.
-const PROFILE_CACHE_DAYS = Number(process.env.SYNC_PROFILE_CACHE_DAYS ?? 7);
-// Vestigingen die we eerder hebben afgewezen (verkeerde SBI of te oud) cachen
-// we N dagen lang — anders betalen we elke run opnieuw €0,02 per profiel om
-// hetzelfde oordeel te vellen. Bedrijven veranderen zelden van SBI; 30 dagen
-// is een veilige refresh-periode.
-const REJECT_CACHE_DAYS = Number(process.env.SYNC_REJECT_CACHE_DAYS ?? 30);
+
+// Kernregel: een vestigingsnummer dat we al kennen — als lead OF als eerdere
+// afwijzing — halen we NOOIT een tweede keer op. Het doel van de sync is het
+// vinden van *nieuwe* inschrijvingen; een bedrijf dat we al beoordeeld hebben is
+// per definitie niet nieuw. Zo betalen we de €0,02 profielkost precies één keer
+// per vestiging, ongeacht hoe vaak we dezelfde regio opnieuw scannen.
+//
+// Een afwijzing "too-old" wordt alleen maar ouder, dus die hoeft nooit herzien.
+// Wil je een vestiging tóch opnieuw beoordelen (bv. na een SBI-wijziging), draai
+// dan een sync in testmodus — die negeert beide caches.
 
 /**
  * Runt een sync: zoekt vestigingen, haalt vestigingsprofielen op, filtert
@@ -75,9 +76,6 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
   let totalLeadsCreated = 0;
   let totalLeadsUpdated = 0;
 
-  const cacheCutoff = new Date(Date.now() - PROFILE_CACHE_DAYS * 24 * 60 * 60 * 1000);
-  const rejectCutoff = new Date(Date.now() - REJECT_CACHE_DAYS * 24 * 60 * 60 * 1000);
-
   try {
     for (const baseParams of options.searches) {
       if (totalProfilesFetched >= maxProfiles) break;
@@ -102,55 +100,42 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
           if (totalProfilesFetched >= maxProfiles) break;
           if (!item.vestigingsnummer) continue; // alleen vestigingen — geen losse rechtspersonen
 
-          // Afwijzings-cache: hebben we deze vestiging eerder geëvalueerd én
-          // niet relevant bevonden? Zo ja, sla 'm over zonder opnieuw €0,02
-          // uit te geven. In testmodus negeren we deze cache ook — anders kun
-          // je 'm nooit handmatig herevalueren.
+          // Hebben we deze vestiging al eerder beoordeeld? Dan slaan we 'm over
+          // ZONDER het profiel opnieuw op te halen — we betalen de €0,02 maar
+          // één keer per vestiging. Testmodus negeert dit zodat je kunt
+          // herevalueren. Beide checks parallel voor snelheid.
           if (!ignoreFilters) {
-            const rejected = await prisma.rejectedVestiging.findUnique({
-              where: { vestigingsnummer: item.vestigingsnummer },
-              select: { checkedAt: true },
-            });
-            if (rejected && rejected.checkedAt > rejectCutoff) {
+            const [existingLead, existingReject] = await Promise.all([
+              prisma.lead.findUnique({
+                where: { vestigingsnummer: item.vestigingsnummer },
+                select: { id: true },
+              }),
+              prisma.rejectedVestiging.findUnique({
+                where: { vestigingsnummer: item.vestigingsnummer },
+                select: { vestigingsnummer: true },
+              }),
+            ]);
+            if (existingLead) {
+              // Al bekend als lead — niets te doen, geen KVK-call.
+              profilesFromCache += 1;
+              continue;
+            }
+            if (existingReject) {
+              // Eerder afgewezen (verkeerde SBI of te oud) — overslaan.
               profilesSkippedRejected += 1;
               continue;
             }
           }
 
-          // Cache-check: hebben we dit profiel recent al opgehaald? Zo ja,
-          // hergebruiken we de opgeslagen JSON in plaats van een nieuwe €0,02-call.
-          const cachedLead = await prisma.lead.findUnique({
-            where: { vestigingsnummer: item.vestigingsnummer },
-            select: { id: true, lastSyncedAt: true, rawProfileJson: true },
-          });
-
+          // Onbekend vestigingsnummer: dít is het enige pad dat een KVK-call
+          // (en dus €0,02) kost.
           let profile: KvkVestigingProfile;
-          if (
-            cachedLead?.rawProfileJson &&
-            cachedLead.lastSyncedAt &&
-            cachedLead.lastSyncedAt > cacheCutoff
-          ) {
-            try {
-              profile = JSON.parse(cachedLead.rawProfileJson) as KvkVestigingProfile;
-              profilesFromCache += 1;
-            } catch {
-              // Corrupte cache — val terug op een verse call.
-              try {
-                profile = await getVestigingsprofiel(item.vestigingsnummer);
-                totalProfilesFetched += 1;
-              } catch (e) {
-                errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
-                continue;
-              }
-            }
-          } else {
-            try {
-              profile = await getVestigingsprofiel(item.vestigingsnummer);
-              totalProfilesFetched += 1;
-            } catch (e) {
-              errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
-              continue;
-            }
+          try {
+            profile = await getVestigingsprofiel(item.vestigingsnummer);
+            totalProfilesFetched += 1;
+          } catch (e) {
+            errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
+            continue;
           }
 
           const sbiCodes = (profile.sbiActiviteiten ?? []).map((s) => s.sbiCode);
@@ -239,8 +224,15 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
             source: "kvk-zoeken-api",
           };
 
-          if (cachedLead) {
-            await prisma.lead.update({ where: { id: cachedLead.id }, data });
+          // Normaal gesproken is dit een nieuwe vestiging (bestaande zijn
+          // hierboven al overgeslagen). In testmodus kan 'ie al bestaan —
+          // dan updaten we in plaats van te crashen op de unique-constraint.
+          const existing = await prisma.lead.findUnique({
+            where: { vestigingsnummer: profile.vestigingsnummer },
+            select: { id: true },
+          });
+          if (existing) {
+            await prisma.lead.update({ where: { id: existing.id }, data });
             totalLeadsUpdated += 1;
           } else {
             await prisma.lead.create({ data });

@@ -162,7 +162,7 @@ export function SyncForm() {
               <p>
                 {result.totalLeadsCreated} nieuwe lead(s) · {result.totalLeadsUpdated} bijgewerkt ·{" "}
                 {result.totalProfilesFetched} profielen opgehaald
-                {result.profilesFromCache > 0 && <> · {result.profilesFromCache} uit cache</>}
+                {result.profilesFromCache > 0 && <> · {result.profilesFromCache} al bekend als lead</>}
                 {result.profilesSkippedRejected > 0 && (
                   <> · {result.profilesSkippedRejected} eerder afgewezen, overgeslagen</>
                 )}
