@@ -71,20 +71,26 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
 
   let totalSearched = 0;
   let totalProfilesFetched = 0;
+  let profileCallsAttempted = 0; // succesvol + mislukt — bepaalt de rate-limit cap
   let profilesFromCache = 0;
   let profilesSkippedRejected = 0;
   let totalLeadsCreated = 0;
   let totalLeadsUpdated = 0;
+  // Circuit breaker: stopt de hele run als KVK-profielcalls structureel falen
+  // (bv. ongeldige key of verkeerde base-URL). Voorkomt dat we door honderden
+  // resultaten heen blijven hameren op een misconfiguratie.
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 15;
 
   try {
-    for (const baseParams of options.searches) {
-      if (totalProfilesFetched >= maxProfiles) break;
+    searchLoop: for (const baseParams of options.searches) {
+      if (profileCallsAttempted >= maxProfiles) break;
 
       let page = baseParams.pagina ?? 1;
       const pageSize = baseParams.aantal ?? 100;
       let totalForQuery = Infinity;
 
-      while ((page - 1) * pageSize < totalForQuery && totalProfilesFetched < maxProfiles) {
+      while ((page - 1) * pageSize < totalForQuery && profileCallsAttempted < maxProfiles) {
         let searchResp;
         try {
           searchResp = await searchKvk({ ...baseParams, pagina: page, aantal: pageSize, type: baseParams.type ?? "hoofdvestiging" });
@@ -97,7 +103,7 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
         totalSearched += searchResp.resultaten.length;
 
         for (const item of searchResp.resultaten) {
-          if (totalProfilesFetched >= maxProfiles) break;
+          if (profileCallsAttempted >= maxProfiles) break;
           if (!item.vestigingsnummer) continue; // alleen vestigingen — geen losse rechtspersonen
 
           // Hebben we deze vestiging al eerder beoordeeld? Dan slaan we 'm over
@@ -128,13 +134,24 @@ export async function runSync(options: SyncOptions): Promise<SyncSummary> {
           }
 
           // Onbekend vestigingsnummer: dít is het enige pad dat een KVK-call
-          // (en dus €0,02) kost.
+          // (en dus €0,02) kost. Tel elke poging — ook mislukte tellen mee voor
+          // de rate-limit cap en de KVK rate limits zelf.
           let profile: KvkVestigingProfile;
+          profileCallsAttempted += 1;
           try {
             profile = await getVestigingsprofiel(item.vestigingsnummer);
             totalProfilesFetched += 1;
+            consecutiveErrors = 0;
           } catch (e) {
             errors.push(`vestigingsprofiel ${item.vestigingsnummer}: ${(e as Error).message}`);
+            consecutiveErrors += 1;
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              errors.push(
+                `Gestopt: ${MAX_CONSECUTIVE_ERRORS} opeenvolgende profielfouten. ` +
+                  `Controleer KVK_API_KEY en KVK_API_BASE_URL (productie = https://api.kvk.nl/api/v2).`,
+              );
+              break searchLoop;
+            }
             continue;
           }
 
